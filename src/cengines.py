@@ -1,7 +1,7 @@
 import ctypes
 
-# Engines used in Checkerboard (http://www.fierz.ch/checkers.htm) plus Kingsrow (http://edgilbert.org/EnglishCheckers/KingsRowEnglish.htm)
-engines = {name : ctypes.WinDLL(f"..\\engines\\{name}64.dll") for name in ["cakeM", "easych", "kingscourt", "Kingsrow", "simplech"]}
+# Engines used in Checkerboard (http://www.fierz.ch/checkers.htm)
+engines = {name : ctypes.WinDLL(f"..\\engines\\{name}64.dll") for name in ["cakeM", "easych", "simplech"]}
 
 class coor(ctypes.Structure):
     _fields_ = [
