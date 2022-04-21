@@ -1,13 +1,14 @@
-from turtle import pos
 from typing import List
 import torch
 
-class Rules():
+
+
+class TensorRepresentation():
     '''
     A Class that keeps track of the Checkers rules.
     '''
     initialized = False
-
+    
     @classmethod
     def initialize(cls, device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')):
         cls.device = device
@@ -234,16 +235,33 @@ class Rules():
 
 
     def next_positions(positions : torch.tensor) -> List[torch.tensor]:
-        expanded_positions = positions.expand(len(Rules.MOVES), len(positions), 6, 32).transpose(0, 1)
+        expanded_positions = positions.expand(len(TensorRepresentation.MOVES), len(positions), 6, 32).transpose(0, 1)
         mask = (
-                torch.maximum(expanded_positions, Rules._SUFFICIENCY_FILTER.expand(len(positions), len(Rules.MOVES), 6, 32))
+                torch.maximum(expanded_positions, TensorRepresentation._SUFFICIENCY_FILTER.expand(len(positions), len(TensorRepresentation.MOVES), 6, 32))
             ).amin([2, 3]) * (
-                1 - (expanded_positions * Rules._FREENESS_FILTER.expand(len(positions), len(Rules.MOVES), 6, 32)).amax([2, 3])
+                1 - (expanded_positions * TensorRepresentation._FREENESS_FILTER.expand(len(positions), len(TensorRepresentation.MOVES), 6, 32)).amax([2, 3])
             ).flatten(1)
-        indices = [i[i < Rules.CAPTURE_COUNT] if i[0] < Rules.CAPTURE_COUNT else i[i >= Rules.CAPTURE_COUNT] for i in [layer.argwhere() for layer in mask]]
+        indices = [i[i < TensorRepresentation.CAPTURE_COUNT] if i[0] < TensorRepresentation.CAPTURE_COUNT else i[i >= TensorRepresentation.CAPTURE_COUNT] for i in [layer.argwhere() for layer in mask]]
         next = torch.maximum(
-            expanded_positions * Rules._REMOVER.expand(len(positions), len(Rules.MOVES), 6, 32),
-            Rules._ADDER.expand(len(positions), len(Rules.MOVES), 6, 32)
+            expanded_positions * TensorRepresentation._REMOVER.expand(len(positions), len(TensorRepresentation.MOVES), 6, 32),
+            TensorRepresentation._ADDER.expand(len(positions), len(TensorRepresentation.MOVES), 6, 32)
         )
-        return [options[i] for options, i in zip(next, indices)]
+        return [options[i][:, [3, 4, 5, 0, 1, 2]].flip(dims=(2,)) for options, i in zip(next, indices)]
+    
+    def to_32(position : torch.tensor):
+        return [int(position[0][i]) + 2*int(position[1][i]) -int(position[3][i]) - 2*int(position[4][i]) for i in range(32)]
+
+    def from_32(position, device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')):
+        return torch.tensor(
+            [
+                [position[i] == 1 for i in range(32)],
+                [position[i] == 2 for i in range(32)],
+                [position[i] in [1, 2] for i in range(32)],
+                [position[i] == -1 for i in range(32)],
+                [position[i] == -2 for i in range(32)],
+                [position[i] in [-1, -2] for i in range(32)],
+            ],
+            dtype=torch.float,
+            device=device
+        )
 

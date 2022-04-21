@@ -1,9 +1,10 @@
 import ctypes
-import math
 from numpy.random import default_rng
 import torch
 import re
 from tqdm import tqdm
+from checkers import Game, Player
+from math import exp
 
 # Engines used in Checkerboard (http://www.fierz.ch/checkers.htm)
 engines = {name : ctypes.WinDLL(f".\\engines\\{name}64.dll") for name in ["easych", "simplech"]}
@@ -38,35 +39,36 @@ for engine in engines.values():
         ctypes.POINTER(CBmove),
     ]
 
-def tensor_to_c_index(i : int):
-    return 6 + (i//4)%2 - 2 * (i % 4), i // 4
+def index_32_to_64(i : int):
+    return (i//4)%2 + 2 * (i % 4), i // 4
 
-def c_to_tensor_index(i : int, j : int):
-    assert (i + j)%2, "This square does not occurr in checkers"
-    return 4 * j + i//8
+def index_64_to_32(i : int, j : int):
+    assert not (i + j)%2, "This square does not occurr in checkers"
+    return 4 * j + i//2
 
-def tensor_to_c_position(tensor_board : torch.tensor):
+def position_32_to_64(board):
     c_board = [[0 for _ in range(8)] for _ in range(8)]
-    for dark_man in tensor_board[0].argwhere():
-        i, j = tensor_to_c_index(int(dark_man))
-        c_board[i][j] = 6
-    for dark_king in tensor_board[1].argwhere():
-        i, j = tensor_to_c_index(int(dark_king))
-        c_board[i][j] = 10
-    for light_man in tensor_board[3].argwhere():
-        i, j = tensor_to_c_index(int(light_man))
-        c_board[i][j] = 5
-    for light_king in tensor_board[4].argwhere():
-        i, j = tensor_to_c_index(int(light_king))
-        c_board[i][j]
+    for ind, piece in enumerate(board):
+        if piece == 1:
+            i, j = index_32_to_64(ind)
+            c_board[i][j] = 6
+        if piece == 2:
+            i, j = index_32_to_64(ind)
+            c_board[i][j] = 10
+        if piece == -1:
+            i, j = index_32_to_64(ind)
+            c_board[i][j] = 5
+        if piece == -2:
+            i, j = index_32_to_64(ind)
+            c_board[i][j] = 9 
     c_board = [(ctypes.c_int * 8)(*row) for row in c_board]
     return ((ctypes.c_int * 8) * 8)(*c_board)
 
-def get_move_and_evaluation(position : torch.tensor, timelimit = 0.5):
+def get_output(position, color, timelimit = 0.5, name = "simplech"):
     result = (ctypes.c_char * 1024)()
-    engines["simplech"].getmove(
-        tensor_to_c_position(position),
-        (ctypes.c_int)(2),
+    engines[name].getmove(
+        position_32_to_64(position),
+        (ctypes.c_int)(2 if color == 1 else 1),
         (ctypes.c_double)(timelimit),
         result,
         ctypes.pointer(ctypes.c_int(0)),
@@ -75,53 +77,39 @@ def get_move_and_evaluation(position : torch.tensor, timelimit = 0.5):
         ctypes.pointer(CBmove()),
     )
     numbers = list(map(int, re.findall(r'\-?\d+', str(result[:100]))))
-    return numbers[0], abs(numbers[1]), 1./(1. + math.exp(float(-min(max(numbers[5], -500), 500))/50.))
+    return numbers[0], abs(numbers[1]), 1./(1. + exp(float(-min(max(numbers[5], -500), 500))/50.))
 
-def random_positions(size : int, time_per_pos : float = 0.5, device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')):
-    data = []
-    rng = default_rng()
-    for i in tqdm(range(0, size, 2)):
-        kings_prob = 0.3*rng.random()
-        light_man_cnt = rng.integers(1, 13)
-        light_king_cnt = rng.binomial(12 - light_man_cnt, kings_prob)
-        dark_man_cnt = 1 + rng.binomial(11, (float)(light_man_cnt - 1)/12.)
-        dark_king_cnt = rng.binomial(12 - dark_man_cnt, kings_prob)
-        available_squares = list(range(32))
-        light_man_pos = [False for _ in range(32)]
-        light_king_pos = [False for _ in range(32)]
-        dark_man_pos = [False for _ in range(32)]
-        dark_king_pos = [False for _ in range(32)]
-        for cnt, pos, cond in zip(
-            [light_man_cnt, light_king_cnt, dark_man_cnt, dark_king_cnt],
-            [light_man_pos, light_king_pos, dark_man_pos, dark_king_pos],
-            [lambda x : x < 28, lambda _ : True, lambda x : x >= 4, lambda _ : True]
-        ):
-            while cnt:
-                s = rng.choice(available_squares)
-                if cond(s):
-                    pos[s] = True
-                    available_squares.remove(s)
-                    cnt -= 1
-        data.append([
-                light_man_pos,
-                light_king_pos,
-                [x or y for x, y in zip(light_man_pos, light_king_pos)],
-                dark_man_pos,
-                dark_king_pos,
-                [x or y for x, y in zip(dark_man_pos, dark_king_pos)]
-            ])
-        mirrored_light_man_pos = [light_man_pos[4*(i//4) + (3 - i%4)] for i in range(32)]
-        mirrored_light_king_pos = [light_king_pos[4*(i//4) + (3 - i%4)] for i in range(32)]
-        mirrored_dark_man_pos = [dark_man_pos[4*(i//4) + (3 - i%4)] for i in range(32)]
-        mirrored_dark_king_pos = [dark_king_pos[4*(i//4) + (3 - i%4)] for i in range(32)]
-        data.append([
-                mirrored_light_man_pos,
-                mirrored_light_king_pos,
-                [x or y for x, y in zip(mirrored_light_man_pos, mirrored_light_king_pos)],
-                mirrored_dark_man_pos,
-                mirrored_dark_king_pos,
-                [x or y for x, y in zip(mirrored_dark_man_pos, mirrored_dark_king_pos)]
-            ])
-    return data
-        
+class Easy(Player):
+    def __init__(self):
+        self.next = None
+
+    def move(self, game: Game, time: float):
+        moves = game.legal_moves()
+        if len(moves) == 1:
+            return moves[0]
+        else:
+            fr, to, _ = get_output(game.position, game.color, timelimit=time, name="easych")
+            fr, to = fr - 1, to - 1
+            fr, to = 4*(fr//4) + 3 - (fr%4), 4*(to//4) + 3 - (to%4)
+            if fr not in range(32) or to not in range(32):
+                return moves[-1]
+            return next(filter(lambda move : move[fr] != game.position[fr] and move[to] != game.position[to], moves))
+
+class Simple(Player):
+    def __init__(self):
+        self.next = None
+
+    def move(self, game: Game, time: float):
+        moves = game.legal_moves()
+        if len(moves) == 1:
+            return moves[0]
+        else:
+            fr, to, _ = get_output(game.position, game.color, timelimit=time, name="simplech")
+            fr, to = fr - 1, to - 1
+            fr, to = 4*(fr//4) + 3 - (fr%4), 4*(to//4) + 3 - (to%4)
+            if fr not in range(32) or to not in range(32):
+                return moves[-1]
+            return next(filter(lambda move : move[fr] != game.position[fr] and move[to] != game.position[to], moves))
+
+
         
