@@ -84,7 +84,7 @@ class Easy(Player):
         self.next = None
 
     def move(self, game: Game, time: float):
-        moves = game.legal_moves()
+        moves = Game.legal_moves(game.position, game.color)
         if len(moves) == 1:
             return moves[0]
         else:
@@ -100,7 +100,7 @@ class Simple(Player):
         self.next = None
 
     def move(self, game: Game, time: float):
-        moves = game.legal_moves()
+        moves = Game.legal_moves(game.position, game.color)
         if len(moves) == 1:
             return moves[0]
         else:
