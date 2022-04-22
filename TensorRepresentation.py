@@ -241,7 +241,11 @@ class TensorRepresentation():
             ).amin([2, 3]) * (
                 1 - (expanded_positions * TensorRepresentation._FREENESS_FILTER.expand(len(positions), len(TensorRepresentation.MOVES), 6, 32)).amax([2, 3])
             ).flatten(1)
-        indices = [i[i < TensorRepresentation.CAPTURE_COUNT] if i[0] < TensorRepresentation.CAPTURE_COUNT else i[i >= TensorRepresentation.CAPTURE_COUNT] for i in [layer.argwhere() for layer in mask]]
+        indices = [
+            (
+                i[i < TensorRepresentation.CAPTURE_COUNT] if i[0] < TensorRepresentation.CAPTURE_COUNT else i[i >= TensorRepresentation.CAPTURE_COUNT]
+            ) if len(i) else torch.empty((0), dtype=torch.long) for i in [layer.argwhere() for layer in mask]
+        ]
         next = torch.maximum(
             expanded_positions * TensorRepresentation._REMOVER.expand(len(positions), len(TensorRepresentation.MOVES), 6, 32),
             TensorRepresentation._ADDER.expand(len(positions), len(TensorRepresentation.MOVES), 6, 32)

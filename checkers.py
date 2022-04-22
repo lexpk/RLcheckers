@@ -44,7 +44,8 @@ class Game():
         self.position = position
         self.color = color
         self.ply = ply
-        self.result = 0
+        self.result = None
+        self.trace = []
         self.rendering = False
 
     def _legal_dark_single_captures_no_promotion(piece, position):
@@ -62,48 +63,44 @@ class Game():
                     result.append(([0 if i in [piece, piece - 4 + (piece//4)%2] else position[piece] if i == piece - 7 else position[i] for i in range(32)], piece - 7))
         return result
 
-    def _legal_dark_captures_no_promotion(piece, position):
-        captures = Game._legal_dark_single_captures_no_promotion(piece, position)
+    def _legal_dark_captures_no_promotion(single_captures):
+        captures = single_captures
         for pos, p in captures:
             captures += Game._legal_dark_single_captures_no_promotion(p, pos)
         return [pos for pos, _ in captures]
 
-    def legal_dark_captures_no_promotion(self):
+    def legal_dark_captures_no_promotion(position):
         result = []
         for piece in range(32):
-            result += Game._legal_dark_captures_no_promotion(piece, self.position)
+            result += Game._legal_dark_captures_no_promotion(piece, Game._legal_dark_single_captures_no_promotion(piece, position))
         return result
 
-    def legal_dark_non_captures_no_promotion(self):
+    def legal_dark_non_captures_no_promotion(position):
         result = []
         for piece in range(32):
-            if self.position[piece] > 0:
+            if position[piece] > 0:
                 if piece < 28:
-                    if piece % 8 != 0 and self.position[piece + 3 + (piece//4)%2] == 0:
-                        result.append([0 if i == piece else self.position[piece] if i == piece + 3 + (piece//4)%2 else self.position[i] for i in range(32)])
-                    if piece % 8 != 7 and self.position[piece + 4 + (piece//4)%2] == 0:
-                        result.append([0 if i == piece else self.position[piece] if i == piece + 4 + (piece//4)%2 else self.position[i] for i in range(32)])
-                if self.position[piece] == 2 and piece >= 4:
-                    if piece % 8 != 0 and self.position[piece - 5 + (piece//4)%2] == 0:
-                        result.append([0 if i == piece else 2 if i == piece - 5 + (piece//4)%2 else self.position[i] for i in range(32)])
-                    if piece % 8 != 7 and self.position[piece - 4 + (piece//4)%2] == 0:
-                        result.append([0 if i == piece else 2 if i == piece - 4 + (piece//4)%2 else self.position[i] for i in range(32)])
+                    if piece % 8 != 0 and position[piece + 3 + (piece//4)%2] == 0:
+                        result.append([0 if i == piece else position[piece] if i == piece + 3 + (piece//4)%2 else position[i] for i in range(32)])
+                    if piece % 8 != 7 and position[piece + 4 + (piece//4)%2] == 0:
+                        result.append([0 if i == piece else position[piece] if i == piece + 4 + (piece//4)%2 else position[i] for i in range(32)])
+                if position[piece] == 2 and piece >= 4:
+                    if piece % 8 != 0 and position[piece - 5 + (piece//4)%2] == 0:
+                        result.append([0 if i == piece else 2 if i == piece - 5 + (piece//4)%2 else position[i] for i in range(32)])
+                    if piece % 8 != 7 and position[piece - 4 + (piece//4)%2] == 0:
+                        result.append([0 if i == piece else 2 if i == piece - 4 + (piece//4)%2 else position[i] for i in range(32)])
         return result
 
-    def legal_moves(self):
-        if self.color == -1:
-            self.position = [-piece for piece in self.position[::-1]]
-            self.color = 1
-            positions = [[-piece for piece in pos[::-1]] for pos in self.legal_moves()]
-            self.position = [-piece for piece in self.position[::-1]]
-            self.color = -1
+    def legal_moves(position, color):
+        if color == -1:
+            positions = [Game.flip(pos) for pos in Game.legal_moves(Game.flip(position), 1)]
             return positions
-        captures = self.legal_dark_captures_no_promotion()
-        if captures:
-            return [[2 if i >= 28 and capture[i] == 1 else capture[i] for i in range(32)] for capture in captures]
-        return [[2 if i >= 28 and capture[i] == 1 else capture[i] for i in range(32)] for capture in self.legal_dark_non_captures_no_promotion()]
-            
-    
+        single_captures = []
+        for piece in range(32):
+            single_captures += Game._legal_dark_single_captures_no_promotion(piece, position)
+        if single_captures:
+            return [[2 if i >= 28 and capture[i] == 1 else capture[i] for i in range(32)] for capture in Game._legal_dark_captures_no_promotion(single_captures)]
+        return [[2 if i >= 28 and capture[i] == 1 else capture[i] for i in range(32)] for capture in Game.legal_dark_non_captures_no_promotion(position)]    
 
     def render(self):
         self.sender, receiver = mp.Pipe()
@@ -122,23 +119,29 @@ class Game():
 
     def next(self, player, time : float):
         next = player.move(self, time)
-        assert next in self.legal_moves()
+        assert next in Game.legal_moves(self.position, self.color)
         self.ply += 1
+        self.trace += (self.position, self.color)
         self.position = next
         self.color = -self.color
-        if not self.legal_moves():
+        if not Game.legal_moves(self.position, self.color):
             self.result = -self.color
+        if (self.position, self.color) in self.trace:
+            self.result = 0
 
     def simulate(self, p1, p2 , movetime = 1, rendering = True):
         if rendering:
             self.render()
-        while self.result == 0:
+        while self.result == None:
             if self.color == 1:
                 self.next(p1, time = movetime)
             else :
                 self.next(p2, time = movetime)
             if rendering:    
                 self.sender.send(self.position)
+
+    def flip(position):
+        return [-piece for piece in position[::-1]]
             
 
 class Player(ABC):
@@ -153,5 +156,3 @@ class RandomPlayer(Player):
     def move(self, game : Game, time : float):
         sleep(time)
         return list(self.rng.choice(game.legal_moves()))
-
-    
