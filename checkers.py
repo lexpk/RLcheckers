@@ -1,21 +1,31 @@
 from abc import ABC, abstractmethod
-from time import sleep
-import PySimpleGUI as sg
+from math import exp
 import multiprocessing as mp
 from numpy.random import default_rng
+import PySimpleGUI as sg
+from time import sleep
+from typing import List
+
+from position import Position
 
 def visualize(position):
-        layout = [
-            [
-                sg.Image(
-                    Game.IMAGE[3 + position[4*i + j//2]] if (i + j)%2 == 0 else Game.IMAGE[0] , subsample=5, key=(i, j)
-                ) for j in range(8)
-            ]
-            for i in range(7, -1, -1)
-        ]   
-        sg.Window('Checkers', layout, size=(864, 832)).read(close=True)
+    '''
+    Opens new window with visual representation of position.
+    '''
+    layout = [
+        [
+            sg.Image(
+                Game.IMAGE[3 + position.squares[4*i + j//2]] if (i + j)%2 == 0 else Game.IMAGE[0] , subsample=5, key=(i, j)
+            ) for j in range(8)
+        ]
+        for i in range(7, -1, -1)
+    ]   
+    sg.Window('Checkers', layout, size=(864, 832)).read(close=True)
 
 def _windowloop(window, receiver):
+    '''
+    Internal function used by the subprocess that manages the window showing an active game.
+    '''
     while True:
         event, _ = window.read(timeout=10)
         if event != '__TIMEOUT__':
@@ -25,12 +35,14 @@ def _windowloop(window, receiver):
             for i in range(7, -1, -1):
                 for j in range(8):
                     window[(i, j)].update(
-                        Game.IMAGE[3 + position[4*i + j//2]] if (i + j)%2 == 0 else Game.IMAGE[0],
+                        Game.IMAGE[3 + position.squares[4*i + j//2]] if (i + j)%2 == 0 else Game.IMAGE[0],
                         subsample=5
                     )
 
 class Game():
-
+    '''
+    Class for keeping track of an ongoing game.
+    '''
     IMAGE = {}
     IMAGE[0] = ".\\images\\lightsquare_empty.png"
     IMAGE[1] = ".\\images\\darksquare_light_king.png"
@@ -40,74 +52,30 @@ class Game():
     IMAGE[5] = ".\\images\\darksquare_dark_king.png"
 
 
-    def __init__(self, position = [1 for _ in range(12)] + [0 for _ in range(8)] + [-1 for _ in range(12)], color = 1, ply = 0):
+    def __init__(self, position = Position(), ply = 0):
+        '''
+        Initializes new game.
+
+            Parameters: 
+                position: starting position (default: starting position)
+                ply: number of (half)moves already played
+        '''
         self.position = position
-        self.color = color
         self.ply = ply
         self.result = None
         self.trace = []
         self.rendering = False
-
-    def _legal_dark_single_captures_no_promotion(piece, position):
-        result = []
-        if position[piece] > 0:
-            if piece < 24:
-                if piece % 4 != 0 and position[piece + 3 + (piece//4)%2] in [-1, -2] and position[piece + 7] == 0:
-                    result.append(([0 if i in [piece, piece + 3 + (piece//4)%2] else position[piece] if i == piece + 7 else position[i] for i in range(32)], piece + 7))
-                if piece % 4 != 3 and position[piece + 4 + (piece//4)%2] in [-1, -2] and position[piece + 9] == 0:
-                    result.append(([0 if i in [piece, piece + 4 + (piece//4)%2] else position[piece] if i == piece + 9 else position[i] for i in range(32)], piece + 9))
-            if position[piece] == 2 and piece >= 8:
-                if piece % 4 != 0 and position[piece - 5 + (piece//4)%2] in [-1, -2] and position[piece - 9] == 0:
-                    result.append(([0 if i in [piece, piece - 5 + (piece//4)%2] else position[piece] if i == piece - 9 else position[i] for i in range(32)], piece - 9))
-                if piece % 4 != 3 and position[piece - 4 + (piece//4)%2] in [-1, -2] and position[piece - 7] == 0:
-                    result.append(([0 if i in [piece, piece - 4 + (piece//4)%2] else position[piece] if i == piece - 7 else position[i] for i in range(32)], piece - 7))
-        return result
-
-    def _legal_dark_captures_no_promotion(single_captures):
-        captures = single_captures
-        for pos, p in captures:
-            captures += Game._legal_dark_single_captures_no_promotion(p, pos)
-        return [pos for pos, _ in captures]
-
-    def legal_dark_captures_no_promotion(position):
-        result = []
-        for piece in range(32):
-            result += Game._legal_dark_captures_no_promotion(piece, Game._legal_dark_single_captures_no_promotion(piece, position))
-        return result
-
-    def legal_dark_non_captures_no_promotion(position):
-        result = []
-        for piece in range(32):
-            if position[piece] > 0:
-                if piece < 28:
-                    if piece % 8 != 0 and position[piece + 3 + (piece//4)%2] == 0:
-                        result.append([0 if i == piece else position[piece] if i == piece + 3 + (piece//4)%2 else position[i] for i in range(32)])
-                    if piece % 8 != 7 and position[piece + 4 + (piece//4)%2] == 0:
-                        result.append([0 if i == piece else position[piece] if i == piece + 4 + (piece//4)%2 else position[i] for i in range(32)])
-                if position[piece] == 2 and piece >= 4:
-                    if piece % 8 != 0 and position[piece - 5 + (piece//4)%2] == 0:
-                        result.append([0 if i == piece else 2 if i == piece - 5 + (piece//4)%2 else position[i] for i in range(32)])
-                    if piece % 8 != 7 and position[piece - 4 + (piece//4)%2] == 0:
-                        result.append([0 if i == piece else 2 if i == piece - 4 + (piece//4)%2 else position[i] for i in range(32)])
-        return result
-
-    def legal_moves(position, color):
-        if color == -1:
-            positions = [Game.flip(pos) for pos in Game.legal_moves(Game.flip(position), 1)]
-            return positions
-        single_captures = []
-        for piece in range(32):
-            single_captures += Game._legal_dark_single_captures_no_promotion(piece, position)
-        if single_captures:
-            return [[2 if i >= 28 and capture[i] == 1 else capture[i] for i in range(32)] for capture in Game._legal_dark_captures_no_promotion(single_captures)]
-        return [[2 if i >= 28 and capture[i] == 1 else capture[i] for i in range(32)] for capture in Game.legal_dark_non_captures_no_promotion(position)]    
+ 
 
     def render(self):
+        '''
+        Opens a new window in which the game is displayed and updated live.
+        '''
         self.sender, receiver = mp.Pipe()
         layout = [
             [
                 sg.Image(
-                    Game.IMAGE[3 + self.position[4*i + j//2]] if (i + j)%2 == 0 else Game.IMAGE[0] , subsample=5, key=(i, j)
+                    Game.IMAGE[3 + self.position.squares[4*i + j//2]] if (i + j)%2 == 0 else Game.IMAGE[0] , subsample=5, key=(i, j)
                 ) for j in range(8)
             ]
             for i in range(7, -1, -1)
@@ -117,42 +85,71 @@ class Game():
         self.windowprocess.start()
         self.rendering = True          
 
-    def next(self, player, time : float):
-        next = player.move(self, time)
-        assert next in Game.legal_moves(self.position, self.color)
-        self.ply += 1
-        self.trace += (self.position, self.color)
-        self.position = next
-        self.color = -self.color
-        if not Game.legal_moves(self.position, self.color):
-            self.result = -self.color
-        if (self.position, self.color) in self.trace:
-            self.result = 0
+    def next(self, player, time : float, maxply = 10000, verbose = False):
+        '''
+        Prompts player for move and progesses the game accordingly
 
-    def simulate(self, p1, p2 , movetime = 1, rendering = True):
+            Parameters:
+                player: The player to prompt
+                time: timelimit for the player (is not enforced)
+                maxply: maximum number of moves before position is annuled and scored by material count. Used to prevent very long games.
+                verbose: If True player might print additional information to the console.
+        '''
+        next = player.move(self.position, time, trace = self.trace, verbose = verbose)
+        assert next in self.position.legal_moves()
+        self.ply += 1
+        
+        self.trace.append(self.position)
+        self.position = next
+        if not next.legal_moves():
+            self.result = -self.position.color
+        if self.position in self.trace:
+            self.result = 0
+        if self.ply > maxply:
+            self.result = 1./(1. + exp(-float(sum([
+                len([x for x in self.position.squares if x == 1]),
+                3*len([x for x in self.position.squares if x == 2]),
+                -len([x for x in self.position.squares if x == -1]),
+                -3*len([x for x in self.position.squares if x == -2])
+            ]))))
+
+    def simulate(self, p1, p2 , movetime = 1, rendering = True, maxply = 10000, verbose = False):
+        '''
+        Simulates game between two players.
+
+            Parameters:
+                p1: player of the dark pieces
+                p2: player of the light pieces
+                movetime: maximum thinking time per move (not enforced)
+                rendering: If True opens new window to display game, updating live as moves are occurring
+                maxply: maximum number of moves before position is annuled and scored by material count. Used to prevent very long games.
+                verbose: If True players might print additional information to the console. 
+        '''
         if rendering:
             self.render()
-        while self.result == None:
-            if self.color == 1:
-                self.next(p1, time = movetime)
+        while self.result == None:          
+            if self.position.color == 1:
+                self.next(p1, time = movetime, maxply = maxply, verbose = verbose)
             else :
-                self.next(p2, time = movetime)
+                self.next(p2, time = movetime, maxply = maxply, verbose = verbose)
             if rendering:    
                 self.sender.send(self.position)
 
-    def flip(position):
-        return [-piece for piece in position[::-1]]
-            
-
 class Player(ABC):
+    '''
+    blueprint for player class
+    '''
     @abstractmethod
-    def move(self, game : Game, time : float):
+    def move(self, position : Position, time : float, trace : List[Position], verbose : bool):
         pass
 
 class RandomPlayer(Player):
+    '''
+    Agent that chooses a random move at each position.
+    '''
     def __init__(self):
         self.rng = default_rng()
 
-    def move(self, game : Game, time : float):
+    def move(self, position : Position, time : float, trace = [], verbose = False):
         sleep(time)
-        return list(self.rng.choice(game.legal_moves()))
+        return self.rng.choice(position.legal_moves())

@@ -1,10 +1,9 @@
 import ctypes
-from numpy.random import default_rng
-import torch
 import re
-from tqdm import tqdm
 from checkers import Game, Player
 from math import exp
+
+from position import Position
 
 # Engines used in Checkerboard (http://www.fierz.ch/checkers.htm)
 engines = {name : ctypes.WinDLL(f".\\engines\\{name}64.dll") for name in ["easych", "simplech"]}
@@ -83,33 +82,33 @@ class Easy(Player):
     def __init__(self):
         self.next = None
 
-    def move(self, game: Game, time: float):
-        moves = Game.legal_moves(game.position, game.color)
+    def move(self, game: Position, time: float, trace = [], verbose  = False):
+        moves = game.legal_moves()
         if len(moves) == 1:
             return moves[0]
         else:
-            fr, to, _ = get_output(game.position, game.color, timelimit=time, name="easych")
+            fr, to, _ = get_output(game.squares, game.color, timelimit=time, name="easych")
             fr, to = fr - 1, to - 1
             fr, to = 4*(fr//4) + 3 - (fr%4), 4*(to//4) + 3 - (to%4)
             if fr not in range(32) or to not in range(32):
                 return moves[-1]
-            return next(filter(lambda move : move[fr] != game.position[fr] and move[to] != game.position[to], moves))
+            return next(filter(lambda move : move.squares[fr] != game.squares[fr] and move.squares[to] != game.squares[to], moves))
 
 class Simple(Player):
     def __init__(self):
         self.next = None
 
-    def move(self, game: Game, time: float):
-        moves = Game.legal_moves(game.position, game.color)
+    def move(self, game: Game, time: float, trace = [], verbose  = False):
+        moves = game.legal_moves()
         if len(moves) == 1:
             return moves[0]
         else:
-            fr, to, _ = get_output(game.position, game.color, timelimit=time, name="simplech")
+            fr, to, _ = get_output(game.squares, game.color, timelimit=time, name="simplech")
             fr, to = fr - 1, to - 1
             fr, to = 4*(fr//4) + 3 - (fr%4), 4*(to//4) + 3 - (to%4)
             if fr not in range(32) or to not in range(32):
                 return moves[-1]
-            return next(filter(lambda move : move[fr] != game.position[fr] and move[to] != game.position[to], moves))
+            return next(filter(lambda move : move.squares[fr] != game.squares[fr] and move.squares[to] != game.squares[to], moves))
 
 
         

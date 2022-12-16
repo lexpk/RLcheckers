@@ -1,28 +1,38 @@
-from typing import List
-from xmlrpc.client import Boolean
+from math import exp
 from numpy import log, sqrt
 from numpy.random import default_rng
-from math import exp
+from time import time
 import torch
 from tqdm import tqdm
+from typing import List
+
+from position import Position
 from checkers import Game, Player
-from time import time
 
 class MCTD(torch.nn.Module, Player):
+    '''
+    The main class tracking the logic of the reinforcement learning agent.
+    '''
+    def __init__(self, device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')):
+        '''
+        Initializes a new RL Agent.
 
-    def __init__(self, device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')):
+                Parameters:
+                    device: The device the training is to be performed on.
+        '''
         self.device = device
         super(MCTD, self).__init__()
-        self.c1 = torch.nn.Conv1d(4, 32, 12, stride=4, device=device)
-        self.c2 = torch.nn.Conv1d(32, 16, 1, groups=4 , device=device)
-        self.c3 = torch.nn.Conv1d(16, 16, 3, groups=4 , stride=2 , device=device)
-        self.c4 = torch.nn.Conv1d(16, 8, 2, device=device)
-        self.c5 = torch.nn.Conv1d(8, 1, 1, device=device)
+        self.c1 = torch.nn.Conv1d(4, 8, 12, stride=4, device=torch.device('cpu'))
+        self.c2 = torch.nn.Conv1d(8, 1, 1, device=torch.device('cpu'))
+        self.c3 = torch.nn.Linear(6, 1, device=torch.device('cpu'))
         self.activation = torch.nn.ReLU()
         self.sigmoid = torch.nn.Sigmoid()
         self.lossfunction = torch.nn.MSELoss()
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.1)
+        self.optimizer = torch.optim.Adam(self.parameters())
         self.tree = None
+        self.trace = []
+        self.ev_trace = []
+        self.eval()
     
     def forward(self, x):
         x = self.c1(x)
@@ -30,193 +40,210 @@ class MCTD(torch.nn.Module, Player):
         x = self.c2(x)
         x = self.activation(x)
         x = self.c3(x)
-        x = self.activation(x)
-        x = self.c4(x)
-        x = self.activation(x)
-        x = self.c5(x)
         x = self.sigmoid(x)
         return x
 
-    def bootstrap(self, size = 10000, epochs = 1000):
-        positions = []
-        material_balances = []
-        rng = default_rng()
-        for i in tqdm(range(0, int(1.25*size), 1), desc="Generating Random Positions"):
-            kings_prob = 0.3*rng.random()
-            light_man_cnt = rng.integers(1, 13)
-            light_king_cnt = rng.binomial(12 - light_man_cnt, kings_prob)
-            dark_man_cnt = rng.integers(1, 13)
-            dark_king_cnt = rng.binomial(12 - dark_man_cnt, kings_prob)
-            material_balances.append([[ 1./(1. + exp(float(dark_man_cnt + 3*dark_king_cnt - light_man_cnt - 3*light_king_cnt)/exp(1)))]])
-            available_squares = list(range(32))
-            light_man_pos = [False for _ in range(32)]
-            light_king_pos = [False for _ in range(32)]
-            dark_man_pos = [False for _ in range(32)]
-            dark_king_pos = [False for _ in range(32)]
-            for cnt, pos, cond in zip(
-                [light_man_cnt, light_king_cnt, dark_man_cnt, dark_king_cnt],
-                [light_man_pos, light_king_pos, dark_man_pos, dark_king_pos],
-                [lambda x : x < 28, lambda _ : True, lambda x : x >= 4, lambda _ : True]
-            ):
-                while cnt:
-                    s = rng.choice(available_squares)
-                    if cond(s):
-                        pos[s] = True
-                        available_squares.remove(s)
-                        cnt -= 1
-            positions.append([
-                    light_man_pos,
-                    light_king_pos,
-                    dark_man_pos,
-                    dark_king_pos,
-                ])
-        train_inputs = torch.tensor(positions[:size], dtype=torch.float, device=self.device)
-        train_targets = torch.tensor(material_balances[:size], dtype=torch.float, device=self.device)
-        test_inputs = torch.tensor(positions[size:], dtype=torch.float, device=self.device)
-        test_targets = torch.tensor(material_balances[size:], dtype=torch.float, device=self.device)
+    def bootstrap(self, size : int = 25000, epochs : int = 2500):
+        '''
+        Initializes the weights by estimating the material balance of random positions.
 
-        for epoch in tqdm(range(epochs), desc="Training Model"):
+            Parameters:
+                size: number of random positions to train on
+                epochs: number of epochs to train on (empirically size/10 works well)        
+        '''
+        rng = default_rng()
+        pos = []
+        ev = []
+        for i in tqdm(range(0, size, 1), desc="Generating Random Positions"):
+            light_man_cnt = rng.integers(1, 6)
+            light_king_cnt = rng.integers(1, 6)
+            dark_man_cnt = rng.integers(1, 6)
+            dark_king_cnt = rng.integers(1, 6)
+            position = Position.random(dark_man_cnt, dark_king_cnt, light_man_cnt, light_king_cnt)
+            position.color = 1
+            pos.append(position)
+            ev.append([[1./(1. + exp(-float(dark_man_cnt + 3*dark_king_cnt - light_man_cnt - 3*light_king_cnt)))]])
+        self.learn(pos, ev, epochs=epochs)
+
+    def learn(self, pos : List[Position], ev : List[float], epochs : int = 1000):
+        '''
+        updates weights according to provided data.
+
+            Parameters:
+                pos: List of positions to learn from
+                ev: List of correct evaluations for positions in pos
+        '''
+        self.to(device=self.device)
+        self.train()
+
+        inputs = torch.tensor(
+            [p.nn_input() for p in pos],
+            dtype=torch.float,
+            device=self.device
+        )
+        ev = torch.tensor(
+            ev,
+            dtype=torch.float,
+            device=self.device
+        )
+        for epoch in tqdm(range(epochs), desc="Learning", leave = False):
             self.zero_grad()
-            prediction = self(train_inputs)
-            loss = self.lossfunction(prediction, train_targets)
+            prediction = self(inputs)
+            loss = self.lossfunction(prediction, ev)
             loss.backward()
             self.optimizer.step()
-        
-        with torch.no_grad():
-            prediction = self(train_inputs)
-            loss = self.lossfunction(prediction, train_targets)
-            print(f"Performance on trainset: {loss}")
-            prediction = self(test_inputs)
-            loss = self.lossfunction(prediction, test_targets)
-            print(f"Performance on testset: {loss}")
+
+        self.cpu()
+        self.eval()
+       
 
     def to_file(self, name):
+        '''
+        Stores model to file.
+        '''
         torch.save(self.state_dict(), f".\\models\\{name}")
 
     def from_file(name):
+        '''
+        Loads model from file
+        '''
         m = MCTD()
         m.load_state_dict(torch.load(f".\\models\\{name}"))
         return m
 
-    def move(self, game : Game, timelimit, learn = False):
+    def move(self, pos : Position, timelimit, trace = [], verbose = True):
+        '''
+        Promt the agent for a single move.
+
+            Parameters:
+                pos: position of interest
+                timelimit: maximum time for the agent to think
+                trace: previous position for draw evaluation
+                verbose: If true agent prints number of expanded nodes during tree search and internal evalulation
+
+            Returns:
+                Position after move chosen by the agent is performed
+        '''
         t_0 = time()
-        if self.tree == None or self.tree.position != game.position:
-            self.tree = VariationTree(None, None, game.position, game.color)
-        self.tree.expand(4, game.trace)
-        self.tree.expansions = 1
-        nodes = self.tree.collect_ev_nodes()
-        with torch.no_grad():
-            VariationTree.ev_nodes(self, nodes)
-        self.tree.update_ev()
-        ds = []
-        e = 0
-        while(time() - t_0 < timelimit):
-            e += 1
-            node = self.tree
-            d = 4
-            while(node.expansions):
-                if node.terminal:
-                    break
-                if all(c.terminal for c in node.children):
-                    node.terminal = True
-                    break
-                d += 1 
-                node = max(
-                    [c for c in node.children if not c.terminal],
-                    key = lambda c : (1 - c.ev) + sqrt(2. * log(node.expansions)/(1+c.expansions))
-                )
-                node.parent.unev_children = True
-                node.parent.expansions += 1
-            ds.append(d)
-            node.expand(4, game.trace)
-            node.expansions = 1
-            nodes = self.tree.collect_ev_nodes()
-            with torch.no_grad():
-                VariationTree.ev_nodes(self, nodes)
-            self.tree.update_ev()
-        print(f"{self.tree.ev} at maxdepth {max(ds) if ds else 4} with {e} expansions")
-        child = min(self.tree.children, key=lambda c : c.ev)
-        self.tree = child.reroot(child)
+        if self.tree == None:
+            self.tree = VariationTree(pos)
+        else:
+            for child in self.tree.children:
+                if pos == child.position:
+                    self.tree = child
+        if self.tree.position != pos:
+            self.tree = VariationTree(pos)
+        while (time() - t_0 < timelimit) and not self.tree.dead:
+            self.tree.expand(self, trace)
+        if verbose:
+            print(f"{float(self.tree.ev)} with {self.tree.expansions} expansions")      
+        self.trace.append(self.tree.position)
+        self.ev_trace.append(self.tree.ev)
+        child = max(self.tree.children, key=lambda c : 1 - c.ev)
+        self.tree = child
         return self.tree.position
 
+    def learn_by_selfplay(self, positions, movetime, lmb = 0.9, epochs=100, rendering = False):
+        '''
+        Adjusts weights by playing games against itself and performing TD(lambda) learning
+
+            Parameters:
+                positions: starting positions for selfplay.
+                movetime: maximum thinking time per move
+                lmb: lambda for TD(lambda) (0.9 worked ok in some experiments)
+                epochs: number of epochs for learning weights (again n/10 worked well where n ~ positions to learn from)
+                rendering: If true displays the game in gui during selfplay
+        '''
+        pos = []
+        ev = []
+        result = 0
+        for position in tqdm(positions, desc="Playing"):
+            game = Game(position)
+            game.simulate(self, self, movetime=movetime, rendering=rendering, maxply = 200, verbose = False)
+            e = self.ev_trace[-1]
+            for i in range(len(self.trace) - 1):
+                e = lmb * e + (1 - lmb) * self.ev_trace[-1-i]
+                self.ev_trace[-1-i] = e
+            pos += self.trace
+            ev += self.ev_trace
+            self.trace = []
+            self.ev_trace = []
+        self.learn(pos, [[[x]] for x in ev], epochs=epochs)
+
 class VariationTree():
+    '''
+    Internal class for keeping track of the consdiered Variations
+    '''
+    def __init__(self, position : Position):
+        '''
+        Initializes new Variation tree with a single node.
 
-    def __init__(self, root, parent, position : List[int], color : int):
-        self.root : VariationTree = root
-        self.parent : VariationTree = parent
-        self.position :  List[int] = position
-        self.color : int = color
+            Parameters:
+                position: position stored in the single node
+        '''
+        self.position :  Position = position
         self.expansions : int = 0
-        self.leaf : Boolean = True
-        self.ev : float = -1.
+        self.dead = False
+        self.ev = None
         self.children : List[VariationTree] = []
-        self.unev_children : Boolean = False
-        self.terminal = False
-        if self.root == None:
-            self.root = self
-            self.parent = None
 
-    def expand(self, d : int, trace = []):
-        if (self.position, self.color) in trace:
-            self.ev = 0.5
-        else:
-            if d > 0:
-                if self.leaf:
-                    for pos in Game.legal_moves(self.position, self.color):
-                        self.children.append(VariationTree(self.root, self, pos, -self.color))
-                        self.leaf = False
-                for child in self.children:
-                    child.expand(d - 1, trace + [(self.position, self.color)])
-                    self.unev_children = True
-                if any(c.ev == 0 for c in self.children) or all(c.terminal for c in self.children):
-                    self.terminal = True
-                    if self.children:    
-                        self.ev = 1 - min(c.ev for c in self.children)
-                    else:
-                        self.ev = 0
+    def expand(self, player, trace = []):
+        '''
+        Expands the search tree according to exploration-exploitation tradeoff as given in the file.
+
+            Parameters:
+                player: evaluation function for positions
+                trace: previous positions for draw evaluation
+        '''
+        if self.expansions > 0:
+            if [c for c in self.children if not c.dead]:
+                child = max(
+                    [c for c in self.children if not c.dead],
+                    key = lambda c : (1 - c.ev) + sqrt(2. * log(self.expansions)/(1e-3+c.expansions))
+                )
+                child.expand(player, trace + [self.position])
+                self.ev = max((1 - c.ev for c in self.children), default = 0)
+                self.expansions += 1
+                self.dead = all(c.dead for c in self.children) or any(c.ev == 0 for c in self.children)
             else:
-                position = [-piece for piece in self.position[::-1]] if self.color == -1 else self.position
-                if any(Game._legal_dark_single_captures_no_promotion(piece, position) for piece in range(32)):
-                    self.expand(1)
+                self.dead = True
+        else:
+            if self.position in trace:
+                self.ev = torch.tensor([[0.5]])
+                self.dead = True
+            else:
+                for pos in self.position.legal_moves():
+                    if pos not in [c.position for c in self.children]:
+                        child = VariationTree(pos)
+                        child.eval(player)
+                        self.children.append(child)     
+                self.ev = max((1 - c.ev for c in self.children), default=0)
+                self.expansions += 1           
+                self.dead = all(c.dead for c in self.children) or any(c.ev == 0 for c in self.children)
+    
+    def eval(self, player):
+        '''
+        evaluates a node w.r.t. a evaluation function.
 
-    def collect_ev_nodes(self):
-        nodes = []
-        if self.ev == -1:
-            nodes.append(self)
-        if self.unev_children:
-            for child in self.children:
-                nodes += child.collect_ev_nodes()
-        return nodes
-
-    def ev_nodes(nn, nodes):
-        if nodes:
-            inputs = torch.tensor(
-                [
-                    [
-                        [position[i] == 1 for i in range(32)],
-                        [position[i] == 2 for i in range(32)],
-                        [position[i] == -1 for i in range(32)],
-                        [position[i] == -2 for i in range(32)],
-                    ] for position in map(lambda x : x.position if x.color == 1 else Game.flip(x.position), nodes)
-                ],
-                dtype=torch.float,
-                device = nn.device
+            Parameters:
+                player: evaluation function for positions
+        '''
+        if len(self.position.legal_moves()) == 0:
+            self.ev = torch.tensor([[0]])
+            self.dead = True
+            return
+        if self.position.has_captures():
+            self.expand(player, [])
+            self.ev = max((1 - c.ev for c in self.children), default=0)
+            self.dead = all(c.dead for c in self.children) or any(c.ev == 0 for c in self.children)
+            return
+        with torch.no_grad():
+            self.ev = player.forward(
+                torch.tensor(
+                    self.position.nn_input(),
+                    dtype=torch.float,
+                    device=torch.device('cpu')
+                )
             )
-            evs = nn(inputs)
-            for i, node in enumerate(nodes):
-                node.ev = (float)(evs[i])
-    
-    def update_ev(self):
-        if self.unev_children:
-            for child in self.children:
-                child.update_ev()
-            self.ev = 1 - min(child.ev for child in self.children)
-    
-    def reroot(self, root):
-        self.root = root
-        self.ev = -1
-        for child in self.children:
-            child.reroot(root)
-        return root
 
         
