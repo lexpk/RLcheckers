@@ -118,7 +118,7 @@ class MCTD(torch.nn.Module, Player):
             Parameters:
                 pos: position of interest
                 timelimit: maximum time for the agent to think
-                trace: previous position for draw evaluation
+                trace: previous positions for draw evaluation
                 verbose: If true agent prints number of expanded nodes during tree search and internal evalulation
 
             Returns:
@@ -131,8 +131,9 @@ class MCTD(torch.nn.Module, Player):
             for child in self.tree.children:
                 if pos == child.position:
                     self.tree = child
-        if self.tree.position != pos:
-            self.tree = VariationTree(pos)
+                    break
+            else:
+                self.tree = VariationTree(pos)
         while (time() - t_0 < timelimit) and not self.tree.dead:
             self.tree.expand(self, trace)
         if verbose:
@@ -162,7 +163,7 @@ class MCTD(torch.nn.Module, Player):
             game.simulate(self, self, movetime=movetime, rendering=rendering, maxply = 200, verbose = False)
             e = self.ev_trace[-1]
             for i in range(len(self.trace) - 1):
-                e = lmb * e + (1 - lmb) * self.ev_trace[-1-i]
+                e =  lmb * (1 - e) + (1 - lmb) * self.ev_trace[-1-i]
                 self.ev_trace[-1-i] = e
             pos += self.trace
             ev += self.ev_trace
