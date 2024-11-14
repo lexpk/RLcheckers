@@ -5,14 +5,17 @@ from math import exp
 
 from position import Position
 
+
 # Engines used in Checkerboard (http://www.fierz.ch/checkers.htm)
 engines = {name : ctypes.WinDLL(f".\\engines\\{name}64.dll") for name in ["easych", "simplech"]}
+
 
 class coor(ctypes.Structure):
     _fields_ = [
         ("x", ctypes.c_int),
         ("y", ctypes.c_int),
     ]
+
 
 class CBmove(ctypes.Structure):
     _fields_ = [
@@ -26,6 +29,7 @@ class CBmove(ctypes.Structure):
         ("delpiece", ctypes.c_int * 12)
     ]
 
+
 for engine in engines.values():
     engine.getmove.argtypes = [
         (ctypes.c_int * 8) * 8,
@@ -38,12 +42,15 @@ for engine in engines.values():
         ctypes.POINTER(CBmove),
     ]
 
+
 def index_32_to_64(i : int):
     return (i//4)%2 + 2 * (i % 4), i // 4
+
 
 def index_64_to_32(i : int, j : int):
     assert not (i + j)%2, "This square does not occurr in checkers"
     return 4 * j + i//2
+
 
 def position_32_to_64(board):
     c_board = [[0 for _ in range(8)] for _ in range(8)]
@@ -63,6 +70,7 @@ def position_32_to_64(board):
     c_board = [(ctypes.c_int * 8)(*row) for row in c_board]
     return ((ctypes.c_int * 8) * 8)(*c_board)
 
+
 def get_output(position, color, timelimit = 0.5, name = "simplech"):
     result = (ctypes.c_char * 1024)()
     engines[name].getmove(
@@ -77,6 +85,7 @@ def get_output(position, color, timelimit = 0.5, name = "simplech"):
     )
     numbers = list(map(int, re.findall(r'\-?\d+', str(result[:100]))))
     return numbers[0], abs(numbers[1]), 1./(1. + exp(float(-min(max(numbers[5], -500), 500))/50.))
+
 
 class Easy(Player):
     def __init__(self):
@@ -94,6 +103,7 @@ class Easy(Player):
                 return moves[-1]
             return next(filter(lambda move : move.squares[fr] != game.squares[fr] and move.squares[to] != game.squares[to], moves))
 
+
 class Simple(Player):
     def __init__(self):
         self.next = None
@@ -109,6 +119,3 @@ class Simple(Player):
             if fr not in range(32) or to not in range(32):
                 return moves[-1]
             return next(filter(lambda move : move.squares[fr] != game.squares[fr] and move.squares[to] != game.squares[to], moves))
-
-
-        

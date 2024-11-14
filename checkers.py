@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod
 from math import exp
 import multiprocessing as mp
-from numpy.random import default_rng
-import PySimpleGUI as sg
+from random import choice
+#import PySimpleGUI as sg
 from time import sleep
 from typing import List
 
 from position import Position
+
 
 def visualize(position):
     '''
@@ -21,6 +22,7 @@ def visualize(position):
         for i in range(7, -1, -1)
     ]   
     sg.Window('Checkers', layout, size=(864, 832)).read(close=True)
+
 
 def _windowloop(window, receiver):
     '''
@@ -38,6 +40,7 @@ def _windowloop(window, receiver):
                         Game.IMAGE[3 + position.squares[4*i + j//2]] if (i + j)%2 == 0 else Game.IMAGE[0],
                         subsample=5
                     )
+
 
 class Game():
     '''
@@ -135,6 +138,7 @@ class Game():
             if rendering:    
                 self.sender.send(self.position)
 
+
 class Player(ABC):
     '''
     blueprint for player class
@@ -148,8 +152,8 @@ class RandomPlayer(Player):
     Agent that chooses a random move at each position.
     '''
     def __init__(self):
-        self.rng = default_rng()
+        pass
 
     def move(self, position : Position, time : float, trace = [], verbose = False):
         sleep(time)
-        return self.rng.choice(position.legal_moves())
+        return choice(position.legal_moves())

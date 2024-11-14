@@ -8,3 +8,7 @@ models
 *.bbl
 *.blg
 *.synctex.gz
+
+wandb/
+data/
+checkers/

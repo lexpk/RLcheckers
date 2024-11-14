@@ -1,4 +1,6 @@
-from numpy.random import choice
+from random import choice, choices
+import torch
+from torch.utils.data import Dataset
 
 class Position:
     '''
@@ -148,12 +150,9 @@ class Position:
         Transforms a position into a form palattable for the learning by the MCTD agent
         '''
         position = self if self.color == 1 else Position.flip(self)
-        return [
-            [position.squares[i] == 1 for i in range(32)],
-            [position.squares[i] == 2 for i in range(32)],
-            [position.squares[i] == -1 for i in range(32)],
-            [position.squares[i] == -2 for i in range(32)],
-        ]
+        return torch.tensor(
+            [2 + position.squares[i] + 4 * i for i in range(32)]
+        )
 
     def random(light_men, light_kings, dark_men, dark_kings):
         '''
@@ -166,13 +165,13 @@ class Position:
                 dark_kings: number of dark kings
         '''
         result = [0 for _ in range(32)]
-        pieces = choice(list(range(28)), light_men, replace=False)
+        pieces = choices(list(range(28)), k=light_men)
         result = [1 if i in pieces else result[i] for i in range(32)]
-        pieces = choice([i for i in range(32) if result[i] == 0], light_kings, replace=False)
+        pieces = choices([i for i in range(32) if result[i] == 0], k=light_kings)
         result = [2 if i in pieces else result[i] for i in range(32)]
-        pieces = choice([i for i in range(4, 32) if result[i] == 0], dark_men, replace=False)
+        pieces = choices([i for i in range(4, 32) if result[i] == 0], k=dark_men)
         result = [-1 if i in pieces else result[i] for i in range(32)]
-        pieces = choice([i for i in range(32) if result[i] == 0], dark_kings, replace=False)
+        pieces = choices([i for i in range(32) if result[i] == 0], k=dark_kings)
         result = [-2 if i in pieces else result[i] for i in range(32)]
         return Position(result, choice([-1, 1]))
 
@@ -181,3 +180,44 @@ class Position:
 
     def __hash__(self):
         return sum([abs(self.squares[i])*(2**i) for i in range(32)])
+
+
+class PositionDataset(Dataset):
+    '''
+    Dataset for the MCTD agent. It generates random positions and their evaluations.
+    '''
+    def __init__(self, positions, evaluations):
+        '''
+        Initializes the dataset.
+
+            Parameters:
+                positions: tensor of positions
+                evaluations: tensor of evaluations
+        '''
+        self.positions = positions
+        self.evaluations = evaluations
+
+    def __len__(self):
+        return len(self.positions)
+
+    def __getitem__(self, idx):
+        return self.positions[idx], self.evaluations[idx]
+
+    def save(self, path):
+        '''
+        Saves the dataset to a file.
+
+            Parameters:
+                path: path to the file
+        '''
+        torch.save((self.positions, self.evaluations), path)
+
+    def load(path):
+        '''
+        Loads the dataset from a file.
+
+            Parameters:
+                path: path to the file
+        '''
+        positions, evaluations = torch.load(path, weights_only=True)
+        return PositionDataset(positions, evaluations)

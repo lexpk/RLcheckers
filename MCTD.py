@@ -1,101 +1,45 @@
-from math import exp
-from numpy import log, sqrt
-from numpy.random import default_rng
+from math import exp, log, sqrt
+from subprocess import Popen, PIPE, STDOUT
 from time import time
 import torch
 from tqdm import tqdm
 from typing import List
 
-from position import Position
+from position import Position, PositionDataset
 from checkers import Game, Player
+from evaluator import Evaluator
+
 
 class MCTD(torch.nn.Module, Player):
     '''
     The main class tracking the logic of the reinforcement learning agent.
     '''
-    def __init__(self, device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')):
+    def __init__(self):
         '''
         Initializes a new RL Agent.
 
                 Parameters:
                     device: The device the training is to be performed on.
         '''
-        self.device = device
         super(MCTD, self).__init__()
-        self.c1 = torch.nn.Conv1d(4, 8, 12, stride=4, device=torch.device('cpu'))
-        self.c2 = torch.nn.Conv1d(8, 1, 1, device=torch.device('cpu'))
-        self.c3 = torch.nn.Linear(6, 1, device=torch.device('cpu'))
-        self.activation = torch.nn.ReLU()
-        self.sigmoid = torch.nn.Sigmoid()
-        self.lossfunction = torch.nn.MSELoss()
-        self.optimizer = torch.optim.Adam(self.parameters())
+        self.evaluator = Evaluator(64, 4, 8, 1e-3)
         self.tree = None
         self.trace = []
         self.ev_trace = []
         self.eval()
     
     def forward(self, x):
-        x = self.c1(x)
-        x = self.activation(x)
-        x = self.c2(x)
-        x = self.activation(x)
-        x = self.c3(x)
-        x = self.sigmoid(x)
-        return x
-
-    def bootstrap(self, size : int = 25000, epochs : int = 2500):
         '''
-        Initializes the weights by estimating the material balance of random positions.
+        Forward pass of the model.
 
             Parameters:
-                size: number of random positions to train on
-                epochs: number of epochs to train on (empirically size/10 works well)        
+                x: input tensor
+
+            Returns:
+                logit of predicted win probability
         '''
-        rng = default_rng()
-        pos = []
-        ev = []
-        for i in tqdm(range(0, size, 1), desc="Generating Random Positions"):
-            light_man_cnt = rng.integers(1, 6)
-            light_king_cnt = rng.integers(1, 6)
-            dark_man_cnt = rng.integers(1, 6)
-            dark_king_cnt = rng.integers(1, 6)
-            position = Position.random(dark_man_cnt, dark_king_cnt, light_man_cnt, light_king_cnt)
-            position.color = 1
-            pos.append(position)
-            ev.append([[1./(1. + exp(-float(dark_man_cnt + 3*dark_king_cnt - light_man_cnt - 3*light_king_cnt)))]])
-        self.learn(pos, ev, epochs=epochs)
+        return self.evaluator(x)
 
-    def learn(self, pos : List[Position], ev : List[float], epochs : int = 1000):
-        '''
-        updates weights according to provided data.
-
-            Parameters:
-                pos: List of positions to learn from
-                ev: List of correct evaluations for positions in pos
-        '''
-        self.to(device=self.device)
-        self.train()
-
-        inputs = torch.tensor(
-            [p.nn_input() for p in pos],
-            dtype=torch.float,
-            device=self.device
-        )
-        ev = torch.tensor(
-            ev,
-            dtype=torch.float,
-            device=self.device
-        )
-        for epoch in tqdm(range(epochs), desc="Learning", leave = False):
-            self.zero_grad()
-            prediction = self(inputs)
-            loss = self.lossfunction(prediction, ev)
-            loss.backward()
-            self.optimizer.step()
-
-        self.cpu()
-        self.eval()
-       
 
     def to_file(self, name):
         '''
@@ -124,6 +68,7 @@ class MCTD(torch.nn.Module, Player):
             Returns:
                 Position after move chosen by the agent is performed
         '''
+        self.evaluator.eval()
         t_0 = time()
         if self.tree == None:
             self.tree = VariationTree(pos)
@@ -160,7 +105,7 @@ class MCTD(torch.nn.Module, Player):
         result = 0
         for position in tqdm(positions, desc="Playing"):
             game = Game(position)
-            game.simulate(self, self, movetime=movetime, rendering=rendering, maxply = 200, verbose = False)
+            game.simulate(self, self, movetime=movetime, rendering=rendering, maxply=200, verbose=False)
             e = self.ev_trace[-1]
             for i in range(len(self.trace) - 1):
                 e =  lmb * (1 - e) + (1 - lmb) * self.ev_trace[-1-i]
@@ -171,9 +116,10 @@ class MCTD(torch.nn.Module, Player):
             self.ev_trace = []
         self.learn(pos, [[[x]] for x in ev], epochs=epochs)
 
-class VariationTree():
+
+class VariationTree:
     '''
-    Internal class for keeping track of the consdiered Variations
+    Internal class for keeping track of the considered Variations
     '''
     def __init__(self, position : Position):
         '''
@@ -182,15 +128,15 @@ class VariationTree():
             Parameters:
                 position: position stored in the single node
         '''
-        self.position :  Position = position
-        self.expansions : int = 0
+        self.position: Position = position
+        self.expansions: int = 0
         self.dead = False
         self.ev = None
-        self.children : List[VariationTree] = []
+        self.children: List[VariationTree] = []
 
     def expand(self, player, trace = []):
         '''
-        Expands the search tree according to exploration-exploitation tradeoff as given in the file.
+        Expands the search tree according to exploration-exploitation tradeoff as given in the report.
 
             Parameters:
                 player: evaluation function for positions
@@ -221,7 +167,7 @@ class VariationTree():
                 self.ev = max((1 - c.ev for c in self.children), default=0)
                 self.expansions += 1           
                 self.dead = all(c.dead for c in self.children) or any(c.ev == 0 for c in self.children)
-    
+
     def eval(self, player):
         '''
         evaluates a node w.r.t. a evaluation function.
@@ -230,7 +176,7 @@ class VariationTree():
                 player: evaluation function for positions
         '''
         if len(self.position.legal_moves()) == 0:
-            self.ev = torch.tensor([[0]])
+            self.ev = torch.tensor(0)
             self.dead = True
             return
         if self.position.has_captures():
@@ -240,11 +186,5 @@ class VariationTree():
             return
         with torch.no_grad():
             self.ev = player.forward(
-                torch.tensor(
-                    self.position.nn_input(),
-                    dtype=torch.float,
-                    device=torch.device('cpu')
-                )
+                    self.position.nn_input()
             )
-
-        
