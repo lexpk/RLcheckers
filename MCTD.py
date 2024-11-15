@@ -22,7 +22,7 @@ class MCTD(torch.nn.Module, Player):
                     device: The device the training is to be performed on.
         '''
         super(MCTD, self).__init__()
-        self.evaluator = Evaluator(64, 4, 8, 1e-3)
+        self.evaluator = None
         self.tree = None
         self.trace = []
         self.ev_trace = []
@@ -40,19 +40,18 @@ class MCTD(torch.nn.Module, Player):
         '''
         return self.evaluator(x)
 
-
     def to_file(self, name):
         '''
         Stores model to file.
         '''
-        torch.save(self.state_dict(), f".\\models\\{name}")
+        self.evaluator.save(f"./models/{name}")
 
     def from_file(name):
         '''
         Loads model from file
         '''
         m = MCTD()
-        m.load_state_dict(torch.load(f".\\models\\{name}"))
+        m.evaluator = Evaluator.load_from_checkpoint(f"./models/{name}").eval()
         return m
 
     def move(self, pos : Position, timelimit, trace = [], verbose = True):
@@ -70,51 +69,15 @@ class MCTD(torch.nn.Module, Player):
         '''
         self.evaluator.eval()
         t_0 = time()
-        if self.tree == None:
-            self.tree = VariationTree(pos)
-        else:
-            for child in self.tree.children:
-                if pos == child.position:
-                    self.tree = child
-                    break
-            else:
-                self.tree = VariationTree(pos)
+        self.tree = VariationTree(pos)
         while (time() - t_0 < timelimit) and not self.tree.dead:
-            self.tree.expand(self, trace)
+            self.tree.expand(self, trace, timelimit, t_0)
         if verbose:
             print(f"{float(self.tree.ev)} with {self.tree.expansions} expansions")      
         self.trace.append(self.tree.position)
         self.ev_trace.append(self.tree.ev)
         child = max(self.tree.children, key=lambda c : 1 - c.ev)
-        self.tree = child
-        return self.tree.position
-
-    def learn_by_selfplay(self, positions, movetime, lmb = 0.9, epochs=100, rendering = False):
-        '''
-        Adjusts weights by playing games against itself and performing TD(lambda) learning
-
-            Parameters:
-                positions: starting positions for selfplay.
-                movetime: maximum thinking time per move
-                lmb: lambda for TD(lambda) (0.9 worked ok in some experiments)
-                epochs: number of epochs for learning weights (again n/10 worked well where n ~ positions to learn from)
-                rendering: If true displays the game in gui during selfplay
-        '''
-        pos = []
-        ev = []
-        result = 0
-        for position in tqdm(positions, desc="Playing"):
-            game = Game(position)
-            game.simulate(self, self, movetime=movetime, rendering=rendering, maxply=200, verbose=False)
-            e = self.ev_trace[-1]
-            for i in range(len(self.trace) - 1):
-                e =  lmb * (1 - e) + (1 - lmb) * self.ev_trace[-1-i]
-                self.ev_trace[-1-i] = e
-            pos += self.trace
-            ev += self.ev_trace
-            self.trace = []
-            self.ev_trace = []
-        self.learn(pos, [[[x]] for x in ev], epochs=epochs)
+        return child.position
 
 
 class VariationTree:
@@ -134,7 +97,12 @@ class VariationTree:
         self.ev = None
         self.children: List[VariationTree] = []
 
-    def expand(self, player, trace = []):
+    def __len__(self):
+        if not self.children:
+            return 1
+        return 1 + sum(len(c) for c in self.children)
+
+    def expand(self, player, trace = [], timelimit=None, t_0=None):
         '''
         Expands the search tree according to exploration-exploitation tradeoff as given in the report.
 
@@ -148,7 +116,9 @@ class VariationTree:
                     [c for c in self.children if not c.dead],
                     key = lambda c : (1 - c.ev) + sqrt(2. * log(self.expansions)/(1e-3+c.expansions))
                 )
-                child.expand(player, trace + [self.position])
+                if timelimit and time() - t_0 > timelimit:
+                    return
+                child.expand(player, trace + [self.position], timelimit=timelimit, t_0=t_0)
                 self.ev = max((1 - c.ev for c in self.children), default = 0)
                 self.expansions += 1
                 self.dead = all(c.dead for c in self.children) or any(c.ev == 0 for c in self.children)
@@ -156,17 +126,19 @@ class VariationTree:
                 self.dead = True
         else:
             if self.position in trace:
-                self.ev = torch.tensor([[0.5]])
+                self.ev = 0.5
                 self.dead = True
             else:
                 for pos in self.position.legal_moves():
-                    if pos not in [c.position for c in self.children]:
+                    if timelimit and time() - t_0 > timelimit:
+                        break
+                    if pos not in set(c.position for c in self.children):
                         child = VariationTree(pos)
                         child.eval(player)
-                        self.children.append(child)     
+                        self.children.append(child)
                 self.ev = max((1 - c.ev for c in self.children), default=0)
-                self.expansions += 1           
-                self.dead = all(c.dead for c in self.children) or any(c.ev == 0 for c in self.children)
+                self.expansions += 1
+                self.dead = (self.ev == 0) or (self.ev == 1)
 
     def eval(self, player):
         '''
@@ -176,15 +148,18 @@ class VariationTree:
                 player: evaluation function for positions
         '''
         if len(self.position.legal_moves()) == 0:
-            self.ev = torch.tensor(0)
+            self.ev = 0
             self.dead = True
             return
-        if self.position.has_captures():
-            self.expand(player, [])
+        if self.position.has_captures() and \
+            not 2 in self.position.squares and \
+            not -2 in self.position.squares:
+            self.expand(player, player.trace)
             self.ev = max((1 - c.ev for c in self.children), default=0)
             self.dead = all(c.dead for c in self.children) or any(c.ev == 0 for c in self.children)
             return
-        with torch.no_grad():
-            self.ev = player.forward(
+        else:
+            with torch.no_grad():
+                self.ev = torch.sigmoid(player.forward(
                     self.position.nn_input()
-            )
+                )).item()

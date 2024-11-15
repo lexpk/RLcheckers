@@ -14,22 +14,27 @@ class Evaluator(LightningModule):
         self.out = nn.Linear(dim, 1)
         self.lr = lr
         self.loss = nn.BCEWithLogitsLoss()
+        
+        self.save_hyperparameters("dim", "n_heads", "n_layers", "lr")
 
     def forward(self, x):
         x = self.embedding(x)
         for layer in self.layers:
             x = layer(x)
-        return self.out(x).squeeze()
+        return self.out(x).mean(dim=1).squeeze()
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self(x).mean(dim=1).squeeze()
+        y_hat = self(x)
         loss = self.loss(y_hat, y.squeeze())
         self.log("train_loss", loss, on_step=True, logger=True, prog_bar=False, sync_dist=True)
         return loss
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr)
+
+    def load(name):
+        return Evaluator.load_from_checkpoint("./models/" + name)
 
 
 class TransformerLayer(nn.Module):
@@ -65,6 +70,9 @@ class MultiHeadAttention(nn.Module):
         nn.init.xavier_uniform_(self.out_proj.weight)
 
     def forward(self, x, mask=None):
+        if x.dim() == 2:
+            x = x.unsqueeze(0)        
+        
         q = rearrange(self.wq(x), "b n (h d) -> b n h d", h=self.n_heads)
         k = rearrange(self.wk(x), "b n (h d) -> b n h d", h=self.n_heads)
         q = rearrange(q, "b n h d -> b h n d")

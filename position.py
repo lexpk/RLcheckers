@@ -181,6 +181,26 @@ class Position:
     def __hash__(self):
         return sum([abs(self.squares[i])*(2**i) for i in range(32)])
 
+    def ascii(self):
+        '''
+        Returns ascii representation of the position
+        '''
+        result = ""
+        for i in range(32):
+            if i % 4 == 0:
+                result += "\n"
+            if self.squares[i] == 1:
+                result += " m    " if i // 4 % 2 == 0 else "    m "
+            if self.squares[i] == 2:
+                result += " M    " if i // 4 % 2 == 0 else "    M "
+            if self.squares[i] == -1:
+                result += " l    " if i // 4 % 2 == 0 else "    l "
+            if self.squares[i] == -2:
+                result += " L    " if i // 4 % 2 == 0 else "    L "
+            if self.squares[i] == 0:
+                result += " .    " if i // 4 % 2 == 0 else "    . "
+        return result
+
 
 class PositionDataset(Dataset):
     '''
@@ -210,7 +230,7 @@ class PositionDataset(Dataset):
             Parameters:
                 path: path to the file
         '''
-        torch.save((self.positions, self.evaluations), path)
+        torch.save((self.positions, self.evaluations), "./data/" + path)
 
     def load(path):
         '''
@@ -219,5 +239,5 @@ class PositionDataset(Dataset):
             Parameters:
                 path: path to the file
         '''
-        positions, evaluations = torch.load(path, weights_only=True)
+        positions, evaluations = torch.load("./data/" + path, weights_only=True)
         return PositionDataset(positions, evaluations)

@@ -133,7 +133,7 @@ class Game():
         while self.result == None:          
             if self.position.color == 1:
                 self.next(p1, time = movetime, maxply = maxply, verbose = verbose)
-            else :
+            else:
                 self.next(p2, time = movetime, maxply = maxply, verbose = verbose)
             if rendering:    
                 self.sender.send(self.position)

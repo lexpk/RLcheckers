@@ -6,11 +6,12 @@ import torch
 from position import Position
 from checkers import RandomPlayer, Game
 
+
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--movetime', type=float, default=1)
     parser.add_argument('--name', type=str, default='model.ckpt')
-    parser.add_argument('--period', type=int, default=1)
+    parser.add_argument('--stage', type=int, default=1)
     parser.add_argument('--lmb', type=float, default=0.9)
     args = parser.parse_args()
     
@@ -24,6 +25,6 @@ if __name__ == '__main__':
         p.ev_trace[-1-i] = e
     torch.save((
         torch.stack(
-            [torch.tensor(pos.nn_input()) for pos in p.trace],
+            [pos.nn_input() for pos in p.trace],
         ), torch.tensor(p.ev_trace)
-    ), f".\\games\\data_{args.period}\\game_{args.name}_{args.period}_{time.time()}.pt")
+    ), f"./games/stage_{args.stage}/{time.time()}.pt")

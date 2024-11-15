@@ -12,3 +12,4 @@ models
 wandb/
 data/
 checkers/
+games/
