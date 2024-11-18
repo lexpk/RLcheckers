@@ -22,11 +22,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     
-    dataset = PositionDataset.load("./data/" + args.dataset)
+    dataset = PositionDataset.load(args.dataset)
     if args.name_in is not None:
-        model = Evaluator.load_from_checkpoint("./models/" + args.name_in)
+        model = Evaluator.load(args.name_in)
     else:
-        model = Evaluator(args.dim, args.n_heads, args.n_layers, 1e-3)
+        model = Evaluator(args.dim, args.n_heads, args.n_layers, 1e-4)
     
     data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=16, persistent_workers=True, drop_last=True)
 

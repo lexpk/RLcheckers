@@ -1,3 +1,4 @@
+import ctypes
 from random import choice, choices
 import torch
 from torch.utils.data import Dataset
@@ -154,6 +155,49 @@ class Position:
             [2 + position.squares[i] + 4 * i for i in range(32)]
         )
 
+    class CPosition(ctypes.Structure):
+        _fields_ = [
+            ("bm", ctypes.c_uint32),
+            ("bk", ctypes.c_uint32),
+            ("wm", ctypes.c_uint32),
+            ("wk", ctypes.c_uint32),
+        ]
+
+    def c_position(self):
+        '''
+        Transforms a position into a form palattable for the C engine
+        '''
+        c_input = Position.CPosition()
+        for i in range(32):
+            if self.squares[i] == 1:
+                c_input.bm |= 1 << i
+            if self.squares[i] == 2:
+                c_input.bk |= 1 << i
+            if self.squares[i] == -1:
+                c_input.wm |= 1 << i
+            if self.squares[i] == -2:
+                c_input.wk |= 1 << i
+        return c_input
+        
+    def from_cposition(c_position, color):
+        '''
+        Transforms a C position into a Python position
+        '''
+        squares = []
+        for i in range(32):
+            if c_position.bm & (1 << i):
+                squares.append(1)
+            elif c_position.bk & (1 << i):
+                squares.append(2)
+            elif c_position.wm & (1 << i):
+                squares.append(-1)
+            elif c_position.wk & (1 << i):
+                squares.append(-2)
+            else:
+                squares.append(0)
+        return Position(squares, color)
+
+
     def random(light_men, light_kings, dark_men, dark_kings):
         '''
         Returns a random position with specified material:
@@ -190,16 +234,16 @@ class Position:
             if i % 4 == 0:
                 result += "\n"
             if self.squares[i] == 1:
-                result += " m    " if i // 4 % 2 == 0 else "    m "
+                result += " b    " if i // 4 % 2 == 0 else "    b "
             if self.squares[i] == 2:
-                result += " M    " if i // 4 % 2 == 0 else "    M "
+                result += " B    " if i // 4 % 2 == 0 else "    B "
             if self.squares[i] == -1:
-                result += " l    " if i // 4 % 2 == 0 else "    l "
+                result += " w    " if i // 4 % 2 == 0 else "    w "
             if self.squares[i] == -2:
-                result += " L    " if i // 4 % 2 == 0 else "    L "
+                result += " W    " if i // 4 % 2 == 0 else "    W "
             if self.squares[i] == 0:
                 result += " .    " if i // 4 % 2 == 0 else "    . "
-        return result
+        return result[::-1]
 
 
 class PositionDataset(Dataset):

@@ -2,59 +2,13 @@ from abc import ABC, abstractmethod
 from math import exp
 import multiprocessing as mp
 from random import choice
-#import PySimpleGUI as sg
 from time import sleep
 from typing import List
 
 from position import Position
 
 
-def visualize(position):
-    '''
-    Opens new window with visual representation of position.
-    '''
-    layout = [
-        [
-            sg.Image(
-                Game.IMAGE[3 + position.squares[4*i + j//2]] if (i + j)%2 == 0 else Game.IMAGE[0] , subsample=5, key=(i, j)
-            ) for j in range(8)
-        ]
-        for i in range(7, -1, -1)
-    ]   
-    sg.Window('Checkers', layout, size=(864, 832)).read(close=True)
-
-
-def _windowloop(window, receiver):
-    '''
-    Internal function used by the subprocess that manages the window showing an active game.
-    '''
-    while True:
-        event, _ = window.read(timeout=10)
-        if event != '__TIMEOUT__':
-            return
-        if receiver.poll():
-            position = receiver.recv()
-            for i in range(7, -1, -1):
-                for j in range(8):
-                    window[(i, j)].update(
-                        Game.IMAGE[3 + position.squares[4*i + j//2]] if (i + j)%2 == 0 else Game.IMAGE[0],
-                        subsample=5
-                    )
-
-
 class Game():
-    '''
-    Class for keeping track of an ongoing game.
-    '''
-    IMAGE = {}
-    IMAGE[0] = ".\\images\\lightsquare_empty.png"
-    IMAGE[1] = ".\\images\\darksquare_light_king.png"
-    IMAGE[2] = ".\\images\\darksquare_light_man.png"
-    IMAGE[3] = ".\\images\\darksquare_empty.png"
-    IMAGE[4] = ".\\images\\darksquare_dark_man.png"
-    IMAGE[5] = ".\\images\\darksquare_dark_king.png"
-
-
     def __init__(self, position = Position(), ply = 0):
         '''
         Initializes new game.
@@ -66,27 +20,7 @@ class Game():
         self.position = position
         self.ply = ply
         self.result = None
-        self.trace = []
-        self.rendering = False
- 
-
-    def render(self):
-        '''
-        Opens a new window in which the game is displayed and updated live.
-        '''
-        self.sender, receiver = mp.Pipe()
-        layout = [
-            [
-                sg.Image(
-                    Game.IMAGE[3 + self.position.squares[4*i + j//2]] if (i + j)%2 == 0 else Game.IMAGE[0] , subsample=5, key=(i, j)
-                ) for j in range(8)
-            ]
-            for i in range(7, -1, -1)
-        ]   
-        window = sg.Window('Checkers', layout, size=(864, 832))
-        self.windowprocess =  mp.Process(target = _windowloop, args=[window, receiver])
-        self.windowprocess.start()
-        self.rendering = True          
+        self.trace = []  
 
     def next(self, player, time : float, maxply = 10000, verbose = False):
         '''
@@ -124,28 +58,45 @@ class Game():
                 p1: player of the dark pieces
                 p2: player of the light pieces
                 movetime: maximum thinking time per move (not enforced)
-                rendering: If True opens new window to display game, updating live as moves are occurring
                 maxply: maximum number of moves before position is annuled and scored by material count. Used to prevent very long games.
                 verbose: If True players might print additional information to the console. 
         '''
-        if rendering:
-            self.render()
-        while self.result == None:          
+        def in_ipynb():
+            try:
+                cfg = get_ipython().config 
+                if cfg['IPKernelApp']['parent_appname'] == 'ipython-notebook':
+                    return True
+                else:
+                    return False
+            except NameError:
+                return False
+        
+        if in_ipynb():
+            from IPython.display import clear_output
+
+        while self.result == None: 
             if self.position.color == 1:
                 self.next(p1, time = movetime, maxply = maxply, verbose = verbose)
             else:
                 self.next(p2, time = movetime, maxply = maxply, verbose = verbose)
-            if rendering:    
-                self.sender.send(self.position)
+            if rendering:
+                if in_ipynb():
+                    clear_output(wait=True)
+                print(self.position.ascii())
+                if hasattr(p1, 'ev_trace') and p1.ev_trace:
+                    print(f"P1 EV: {p1.ev_trace[-1]}")
+                if hasattr(p2, 'ev_trace') and p2.ev_trace:
+                    print(f"P2 EV: {p2.ev_trace[-1]}")
 
 
 class Player(ABC):
     '''
-    blueprint for player class
+    Abstract base class for agents.
     '''
     @abstractmethod
     def move(self, position : Position, time : float, trace : List[Position], verbose : bool):
         pass
+
 
 class RandomPlayer(Player):
     '''
