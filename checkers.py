@@ -50,7 +50,7 @@ class Game():
                 -3*len([x for x in self.position.squares if x == -2])
             ]))))
 
-    def simulate(self, p1, p2 , movetime = 1, rendering = True, maxply = 10000, verbose = False):
+    def simulate(self, p1, p2 , movetime=1, rendering=True, maxply=10000, verbose = False):
         '''
         Simulates game between two players.
 
