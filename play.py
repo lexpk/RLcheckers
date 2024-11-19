@@ -9,7 +9,6 @@ import wandb
 from MCTD import MCTD
 from checkers import RandomPlayer, Game
 from position import Position
-from cake import Cake
 
 
 if __name__ == "__main__":
@@ -20,21 +19,18 @@ if __name__ == "__main__":
     parser.add_argument('--movetime', type=float, default=1)
     parser.add_argument('--maxply', type=int, default=100)
     parser.add_argument('--positions', type=int, default=32)
+    parser.add_argument('--results', type=str, default=None)
     args = parser.parse_args()
     
     match args.player1:
         case 'random':
             player1 = RandomPlayer()
-        case 'cake':
-            player1 = Cake()
         case _:
             player1 = MCTD.from_file(args.player1)
 
     match args.player2:
         case 'random':
             player2 = RandomPlayer()
-        case 'cake':
-            player2 = Cake()
         case _:
             player2 = MCTD.from_file(args.player2)
     
@@ -62,3 +58,6 @@ if __name__ == "__main__":
         else:
             draws += 1
         pbar.set_description(f"{args.player1} wins: {p1wins}, {args.player2} wins: {p2wins}, Draws: {draws}")
+    if args.results is not None:
+        with open(args.results, 'a') as f:
+            f.write(f"{args.player1} wins: {p1wins}, {args.player2} wins: {p2wins}, Draws: {draws}\n")

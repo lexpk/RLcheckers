@@ -1,7 +1,17 @@
-The engines used for benchmarking have been created by Ed Gilbert and Martin Fierz. All credit goes to them.
+This is an implementation of a simple checkers agent based on transformers, MCTS and TD(λ). For more information please read the [report](report/report.pdf).
 
-All credit for Cake goes to Martin Fierz. The function python_getmove has been added to [cakepp.c](./cake-1.20/cakepp.c) in order to interface with python.
-Cake's bindings are only configured for Linux. Potentially you will have to recompile. Go to [cake-1.20](./cake-1.20) and use
+### Requirements
+
+Running the training and evaluation requires pytorch, lightning and wandb. Watching the agents play in [experiments.ipynb](experiments.ipynb)  additionally requires ipykernel.
+
+### Installation and use
+
+To train the agents run
 ```
-gcc -fPIC -shared db.c movegen.c ansicake.c book.c cakepp.c -o cakepp.o
+./train.sh
 ```
+Afterwards, you can run the tournament described in the report via
+```
+./tournament.sh
+```
+or observe agents play in [experiments.ipynb](experiments.ipynb).
